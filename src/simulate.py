@@ -19,7 +19,6 @@ import pandas as pd
 from common import load, load_funding
 
 HOLD_BARS = 21 * 96
-COINS = {"BTCUSDT", "ETHUSDT", "ENAUSDT"}
 
 
 @dataclass(frozen=True)
@@ -124,6 +123,7 @@ def trade(mk, j, side, levels, cost=Cost()):
     risk = side * (entry - stop) / entry
     return {
         "symbol": mk.symbol, "side": side, "entry_time": int(t0), "exit_time": int(t_exit), "entry": entry,
+        "stop": stop, "tp1_px": tp1, "tp2_px": tp2, "exit_px": px,
         "stop_pct": risk, "reason": reason, "tp1": len(parts) > 1, "tp2": len(parts) > 2, "hold_d": k / 96,
         "gross": gross, "fees": fees, "funding": fund, "net": net, "R": net / risk, "exit_index": j + k,
     }
@@ -186,7 +186,9 @@ def random_entries(markets, counts, rng, cost=Cost(), stop_pct=0.10, follow_tren
 
 def portfolio(trades, start=10_000.0, risk=0.01, leverage=3, fee_buffer=0.002, loss_lock=0.20):
     """원본 수량 규칙: 손절 시 손실이 순자산 1%가 되게, 전체 명목은 순자산 3배까지, 손실 20%면 신규 진입 잠금."""
-    events = sorted([(t.entry_time, 1, i) for i, t in trades.iterrows()] + [(t.exit_time, 0, i) for i, t in trades.iterrows()])
+    # 같은 시각이면 청산을 진입보다 먼저 처리하되, 진입한 봉에서 바로 손절된 거래는 자기 진입 뒤에 청산되게 한다
+    events = sorted([(t.entry_time, 1, i) for i, t in trades.iterrows()]
+                    + [(t.exit_time + (1 if t.exit_time <= t.entry_time else 0), 0, i) for i, t in trades.iterrows()])
     equity, open_pos, taken, curve, locked = start, {}, {}, [], False
     for time, kind, i in events:
         t = trades.loc[i]
