@@ -17,7 +17,7 @@ VARIANTS = {
     "B": ("B · 보유 알림 기준", "보유 감시 규칙: 평균가 대비 10% 손절, +10%·+20%에서 1/3씩 익절"),
 }
 
-st.set_page_config(page_title="스윙 알림 규칙 검증", page_icon="📈", layout="wide")
+st.set_page_config(page_title="투자 규칙 검증", page_icon="📈", layout="wide")
 st.markdown(
     """<style>
     .block-container {padding-top: 2rem; max-width: 1200px;}
@@ -69,14 +69,92 @@ def stats(t):
 
 
 # ── 머리말 ───────────────────────────────────────────────
-st.title("스윙 알림 규칙, 비용까지 넣어 다시 검증")
+with st.sidebar:
+    study = st.radio("연구", ["① 스윙 알림 규칙", "② 미국 ETF 추세추종"])
+    st.divider()
+
+st.title("투자 규칙, 비용까지 넣어 다시 검증")
+st.markdown(
+    "① 직접 만들어 Discord로 받아 쓰던 **바이낸스 선물 스윙 알림** 규칙을 실제 코드 그대로 과거 시세에 돌렸고, "
+    "비용을 넣으면 남지 않는다는 결론이 나와 ② 데이터가 길고 경제적 이유가 있는 **미국 ETF 추세추종**으로 바꿔 다시 검증했습니다. "
+    "두 연구 모두 결과를 보고 기준을 다시 맞추지 않았습니다. 투자 권유가 아닙니다."
+)
+
+
+def etf_page():
+    e = json.loads((RES / "etf" / "summary.json").read_text(encoding="utf-8"))
+    eq = pd.read_csv(RES / "etf" / "equity.csv", index_col="date", parse_dates=True)
+    st.header("② 미국 ETF 추세추종")
+    st.markdown(
+        "**가설** 추세가 꺾인 자산을 단기채(SHY)로 바꿔 두면, 그냥 들고 있을 때보다 낙폭이 작고 위험 대비 성과가 낫다.  " + "\n"
+        "**방법** ETF 10개(SPY QQQ IWM EFA EEM VNQ GLD DBC TLT IEF) · 매달 말 판단, 다음 날 시가 체결 · 비용 0.1% · "
+        "2007~2015에서 기준(추세 기간)을 고르고 **2016~2026은 한 번만 계산** · 설계는 결과 전에 고정(etf/DESIGN.md)"
+    )
+    test = e["결과"]["검증 2016~2026-11"]
+    names = list(test)
+    c = st.columns(4)
+    s1 = test[names[0]]
+    ew = test["10개 동일 비중"]
+    c[0].metric("S1 최대 낙폭 (검증)", f"{s1['최대낙폭%']:.1f}%", f"동일 비중 {ew['최대낙폭%']:.1f}%", delta_color="off")
+    c[1].metric("S1 샤프 (검증)", f"{s1['샤프']:.2f}", f"동일 비중 {ew['샤프']:.2f}", delta_color="off")
+    c[2].metric("S1 연수익률 (검증)", f"{s1['연수익률%']:.1f}%", f"동일 비중 {ew['연수익률%']:.1f}%", delta_color="off")
+    c[3].metric("학습에서 고른 추세 기간", f"{e['학습에서 고른 L(개월)']['S1']}개월")
+    period = st.radio("기간", ["전체", "학습 2007~2015", "검증 2016~2026"], horizontal=True, index=0)
+    sl = {"전체": slice(None), "학습 2007~2015": slice(None, "2015-12-31"), "검증 2016~2026": slice("2016-01-01", None)}[period]
+    q = eq.loc[sl]
+    q = q / q.iloc[0]
+    colors = [BLUE, "#7C3AED", ORANGE, GREEN, GRAY]
+    fig = go.Figure()
+    for (name, col), color in zip(q.items(), colors):
+        fig.add_trace(go.Scatter(x=q.index, y=col, name=name, line=dict(color=color, width=2.4 if name.startswith("S1") else 1.3)))
+    fig.update_layout(height=340, margin=dict(l=10, r=10, t=10, b=10), yaxis=dict(type="log", title="누적 (시작 = 1)", tickvals=[0.6, 0.8, 1, 1.5, 2, 3, 4, 6, 8], ticktext=["0.6", "0.8", "1", "1.5", "2", "3", "4", "6", "8"]), legend=dict(orientation="h", y=1.1))
+    st.plotly_chart(fig, use_container_width=True)
+    fig = go.Figure()
+    for (name, col), color in zip(q.items(), colors):
+        fig.add_trace(go.Scatter(x=q.index, y=-100 * (1 - col / col.cummax()), name=name, line=dict(color=color, width=2 if name.startswith("S1") else 1), showlegend=False))
+    fig.update_layout(height=200, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="고점 대비 %")
+    st.plotly_chart(fig, use_container_width=True)
+    rows = []
+    for p_name, block in e["결과"].items():
+        for k, m in block.items():
+            rows.append({"기간": p_name, "전략": k, "연수익률%": m["연수익률%"], "연변동성%": m["연변동성%"], "샤프": m["샤프"], "최대낙폭%": m["최대낙폭%"], "최악의 해%": m["최악의 해%"], "연 회전율": m.get("연 회전율")})
+    st.subheader("숫자로 보기")
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    vm = e["변동성 맞춘 비교(S1 vs 동일 비중+SHY)"]
+    st.subheader("그냥 현금을 섞은 것보다 나은가? (변동성을 같게 맞춰 비교)")
+    st.dataframe(pd.DataFrame([{"기간": k, "S1 연수익률%": v["S1"]["연수익률%"], "혼합 연수익률%": v["혼합"]["연수익률%"], "S1 최대낙폭%": v["S1"]["최대낙폭%"], "혼합 최대낙폭%": v["혼합"]["최대낙폭%"]} for k, v in vm.items()]), hide_index=True, use_container_width=True)
+    st.caption("혼합 = 10개 동일 비중과 SHY를 섞어 S1과 변동성을 같게 만든 것 (매일 재조정, 비용 없음 — 혼합 쪽에 유리한 가정)")
+    st.subheader("흔들림 확인")
+    grid = e["L별 결과(흔들림 확인)"]
+    st.dataframe(pd.DataFrame([{"전략·추세 기간": k, "학습 샤프": v["학습"]["샤프"], "검증 샤프": v["검증"]["샤프"], "검증 최대낙폭%": v["검증"]["최대낙폭%"]} for k, v in grid.items()]), hide_index=True, use_container_width=True)
+    bs = e["샤프 차이 부트스트랩(검증)"]
+    st.caption("검증 기간 샤프 차이 (12개월 블록 부트스트랩 2,000번, 90% 구간): " + " · ".join(f"{k} {v['관측']:+.2f} [{v['90% 구간'][0]:+.2f}, {v['90% 구간'][1]:+.2f}]" for k, v in bs.items()))
+    h3 = e["금리 구간별 다음 달 평균 수익률%(H3)"]
+    st.subheader("금리 인하 구간에는 금·원자재가 나을까? (모의투자 때 생각)")
+    st.dataframe(pd.DataFrame([{"구간": k, "개월": v["개월"], **{t: v[t] for t in ("SPY", "QQQ", "GLD", "DBC", "TLT", "SHY")}} for k, v in h3.items() if k in ("인하", "유지", "인상")]), hide_index=True, use_container_width=True)
+    g = h3["인하 구간 GLD−SPY"]
+    st.caption(f"월평균 수익률(%). 인하 구간에서 금은 SPY보다 월 {g['월평균 차이%p']:+.2f}%p 높았지만 t값 {g['t값']}, 인하 국면이 {h3['인하 구간 묶음 수']}번뿐이라 통계적으로 확인됐다고 말할 수 없습니다.")
+    st.subheader("읽은 것")
+    st.markdown(
+        "1. 추세 필터는 두 기간 모두 **최대 낙폭을 크게 줄였습니다** (변동성을 맞춰도 학습 22.8→11.0%, 검증 16.9→12.6%)." + "\n"
+        "2. 하지만 **위험 대비 성과는 2008년이 있던 학습 기간에서만** 나았고, 검증 기간에는 동일 비중·SPY보다 낮았습니다. 큰 하락장을 피하는 보험에 가깝습니다." + "\n"
+        "3. 학습에서 고른 12개월이 검증에서는 가장 나빴습니다(검증 샤프 0.51, 다른 기간은 0.62~0.63). 고른 값 하나보다 범위로 판단해야 합니다." + "\n"
+        "4. 자세한 방법과 한계: github.com/t01054532884-lang/swing-backtest/tree/main/etf"
+    )
+
+
+if study.startswith("②"):
+    etf_page()
+    st.stop()
+
+st.header("① 스윙 알림 규칙")
 st.markdown(
     "직접 만들어 Discord로 받아 쓰던 **바이낸스 선물 스윙 알림**의 규칙을, 실제 알림 코드 그대로 과거 시세에 돌렸습니다. "
     "규칙이 낸 신호는 **골라내지 않고 전부** 기록했고, 손절로 끝난 거래도 그대로 남겼습니다."
 )
 st.markdown(
     f"<span class='note'>종목 {len(cfg['symbols'])}개 (원래 관심 목록 {len(cfg['watchlist'])}개 + ETF·원자재 {len(cfg['added_etf'])}개) · "
-    "2022-01 ~ 2026-11-15 · 수수료·슬리피지·실제 펀딩비 포함 · 규칙 확정 2026-09-29 이후로 규칙을 바꾸지 않음 · 투자 권유 아님</span>",
+    "2022-01 ~ 2026-11-15 · 수수료·슬리피지·실제 펀딩비 포함 · 규칙 확정 2026-09-29 이후로 규칙을 바꾸지 않음</span>",
     unsafe_allow_html=True,
 )
 
@@ -203,5 +281,5 @@ with tab3:
 # ── 방법과 한계 ───────────────────────────────────────────
 with tab4:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    start = readme.find("## 가설")
+    start = readme.find("### 가설")
     st.markdown(readme[start:].replace("![계좌 곡선](docs/equity.png)", ""))
